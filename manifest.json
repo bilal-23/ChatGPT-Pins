@@ -3,6 +3,9 @@
   "name": "ChatGPT Pin Chats",
   "version": "1.0.0",
   "description": "Pin your favorite ChatGPT conversations for easy access",
+  "icons": {
+    "128": "icon.png"
+  },
   "permissions": ["storage"],
   "host_permissions": ["https://chat.openai.com/*"],
   "background": {
@@ -18,6 +21,7 @@
   ],
   "action": {
     "default_title": "ChatGPT Pin Chats",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
   }
 }
