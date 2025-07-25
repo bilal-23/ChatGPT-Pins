@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatGPT Pin Chats</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <div class="popup-header">
+      <div class="header-content">
+        <div class="extension-title">
+          <span class="pin-icon">📌</span>
+          <h1>ChatGPT Pins</h1>
+        </div>
+        <div class="version">v1.0.0</div>
+      </div>
+    </div>
+
+    <!-- Status Section -->
+    <div class="status-section">
+      <div class="status-item">
+        <span class="status-label">Pinned Chats:</span>
+        <span id="pinned-count" class="status-value">0</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Status:</span>
+        <span id="extension-status" class="status-value status-loading">Checking...</span>
+      </div>
+    </div>
+
+    <!-- Pinned Chats List -->
+    <div class="pinned-section">
+      <div class="section-header">
+        <h2>📌 Pinned Chats</h2>
+        <button id="clear-all-btn" class="clear-btn" title="Clear all pins" disabled>
+          <span>🗑️</span>
+        </button>
+      </div>
+      
+      <div id="pinned-list" class="pinned-list">
+        <!-- Pinned chats will be populated here -->
+      </div>
+      
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">📌</div>
+        <p>No pinned chats yet</p>
+        <small>Go to chatgpt.com and click the pin icon next to any chat to pin it!</small>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="actions-section">
+      <button id="open-chatgpt-btn" class="action-btn primary">
+        <span class="btn-icon">🚀</span>
+        Open ChatGPT
+      </button>
+      
+      <div class="action-row">
+        <button id="refresh-btn" class="action-btn secondary">
+          <span class="btn-icon">🔄</span>
+          Refresh
+        </button>
+        <button id="export-btn" class="action-btn secondary">
+          <span class="btn-icon">📥</span>
+          Export
+        </button>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="popup-footer">
+      <div class="footer-links">
+        <a href="#" id="help-link" class="footer-link">Help</a>
+        <span class="separator">•</span>
+        <a href="#" id="settings-link" class="footer-link">Settings</a>
+      </div>
+      <div class="footer-text">
+        <small>Unofficial ChatGPT Extension</small>
+      </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading pinned chats...</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html> 

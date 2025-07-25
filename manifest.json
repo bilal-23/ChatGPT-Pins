@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Pin Chats",
+  "version": "1.0.0",
+  "description": "Pin your favorite ChatGPT conversations for easy access",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chat.openai.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_title": "ChatGPT Pin Chats",
+    "default_popup": "popup.html"
+  }
+}
