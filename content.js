@@ -6,10 +6,11 @@
 class ChatGPTPinExtension {
   constructor() {
     this.pinnedChats = new Set();
+    this.pinnedChatTitles = {}; // Store chat titles alongside IDs
     this.observer = null;
     this.updateTimeout = null;
     this.lastUpdateTime = 0;
-    this.debugMode = false; // Set to true for detailed logging
+    this.debugMode = true; // Enable debug mode to see title extraction
     this.initExtension();
   }
 
@@ -25,9 +26,13 @@ class ChatGPTPinExtension {
     // Setup mutation observer for dynamic content
     this.setupMutationObserver();
 
+    // Monitor URL changes for active chat highlighting
+    this.monitorUrlChanges();
+
     // Apply highlighting on init (with a delay to ensure DOM is ready)
     setTimeout(() => {
       this.updateChatHighlighting();
+      this.updateMainChatVisibility();
     }, 1000);
   }
 
@@ -36,57 +41,64 @@ class ChatGPTPinExtension {
       const result = await chrome.storage.local.get(["pinnedChats"]);
       const loadedChats = result.pinnedChats || [];
 
-      // Enforce 10 pin limit on load (trim excess if needed)
-      if (loadedChats.length > 10) {
-        console.log(
-          `⚠️ Found ${loadedChats.length} pinned chats, trimming to 10 limit`
-        );
-        // Keep the first 10 pins
-        const trimmedChats = loadedChats.slice(0, 10);
-        this.pinnedChats = new Set(trimmedChats);
+      // Handle both old format (array of IDs) and new format (array of objects)
+      this.pinnedChats = new Set();
+      this.pinnedChatTitles = {};
 
-        // Save the trimmed list with error handling
-        try {
-          await chrome.storage.local.set({
-            pinnedChats: Array.from(this.pinnedChats),
-          });
-          console.log("✅ Trimmed and saved pinned chats to enforce 10 limit");
-        } catch (saveError) {
-          console.warn(
-            "⚠️ Could not save trimmed pins immediately:",
-            saveError
-          );
-          // Will be saved later when user interacts with pins
+      loadedChats.forEach(item => {
+        if (typeof item === 'string') {
+          // Old format: just chat ID
+          this.pinnedChats.add(item);
+          this.pinnedChatTitles[item] = `Chat ${item.substring(0, 8)}`;
+        } else if (item && item.id) {
+          // New format: object with id and title
+          this.pinnedChats.add(item.id);
+          this.pinnedChatTitles[item.id] = item.title || `Chat ${item.id.substring(0, 8)}`;
         }
-      } else {
-        this.pinnedChats = new Set(loadedChats);
+      });
+
+      // Enforce 10 pin limit on load (trim excess if needed)
+      if (this.pinnedChats.size > 10) {
+        const chatsArray = Array.from(this.pinnedChats);
+        const excessChats = chatsArray.slice(10);
+        excessChats.forEach(chatId => {
+          this.pinnedChats.delete(chatId);
+          delete this.pinnedChatTitles[chatId];
+        });
+        console.warn(`⚠️ Pin limit exceeded. Removed ${excessChats.length} excess pins.`);
+        await this.savePinnedChats();
       }
 
-      console.log("Loaded pinned chats:", this.pinnedChats);
+      if (this.debugMode) {
+        console.log(`📌 Loaded ${this.pinnedChats.size} pinned chats:`, this.pinnedChatTitles);
+      }
+
+
+
     } catch (error) {
       console.error("Error loading pinned chats:", error);
-      // Fallback to empty set
       this.pinnedChats = new Set();
+      this.pinnedChatTitles = {};
     }
   }
 
   async savePinnedChats() {
     try {
-      // Check if chrome.storage is available
-      if (!chrome?.storage?.local) {
-        throw new Error("Chrome storage API not available");
-      }
+      // Save as array of objects with id and title
+      const pinnedChatsArray = Array.from(this.pinnedChats).map(chatId => ({
+        id: chatId,
+        title: this.pinnedChatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`
+      }));
 
       await chrome.storage.local.set({
-        pinnedChats: Array.from(this.pinnedChats),
+        pinnedChats: pinnedChatsArray
       });
+
       if (this.debugMode) {
-        console.log("Saved pinned chats:", this.pinnedChats);
+        console.log("💾 Saved pinned chats:", pinnedChatsArray);
       }
     } catch (error) {
       console.error("Error saving pinned chats:", error);
-      // Show user-friendly error
-      this.showSaveError();
     }
   }
 
@@ -193,6 +205,7 @@ class ChatGPTPinExtension {
     this.createPinnedSection();
     this.addPinButtonsToChats();
     this.updatePinnedChatsDisplay();
+    this.updateMainChatVisibility();
   }
 
   createPinnedSection() {
@@ -288,15 +301,20 @@ class ChatGPTPinExtension {
     const isPinned = this.pinnedChats.has(chatId);
 
     if (isPinned) {
+      // Unpin the chat
       this.pinnedChats.delete(chatId);
+      delete this.pinnedChatTitles[chatId];
+      
+      // Update button appearance
       buttonElement.innerHTML = "📍";
       buttonElement.className = "pin-button";
       buttonElement.title = "Pin this chat";
+      
       if (this.debugMode) {
-        console.log("✅ Chat unpinned successfully:", chatId);
+        console.log(`📍 Unpinned chat: ${chatId}`);
       }
 
-      // Remove highlighting from main chat history
+      // Remove visual highlighting from main chat history
       const mainChatLink = document.querySelector(
         `nav a[href*="/c/${chatId}"]:not(.pinned-chat-item)`
       );
@@ -304,19 +322,37 @@ class ChatGPTPinExtension {
         mainChatLink.classList.remove("chat-item-pinned");
       }
     } else {
-      // Check pin limit before adding new pin
+      // Check pin limit before adding
       if (this.pinnedChats.size >= 10) {
-        // Show user-friendly error message
-        this.showPinLimitError(buttonElement);
+        console.warn("⚠️ Pin limit reached: Cannot pin more than 10 chats");
         return;
       }
 
+      // Get the chat title before pinning
+      const chatElement = document.querySelector(
+        `nav a[href*="/c/${chatId}"]:not(.pinned-chat-item)`
+      );
+      
+      let chatTitle = `Chat ${chatId.substring(0, 8)}`; // Default fallback
+      
+      if (chatElement) {
+        const extractedTitle = this.getChatTitleByElement(chatElement);
+        if (extractedTitle && extractedTitle.trim()) {
+          chatTitle = extractedTitle.trim();
+        }
+      }
+
+      // Pin the chat with title
       this.pinnedChats.add(chatId);
+      this.pinnedChatTitles[chatId] = chatTitle;
+      
+      // Update button appearance
       buttonElement.innerHTML = "📌";
       buttonElement.className = "pin-button pinned";
       buttonElement.title = "Unpin this chat";
+      
       if (this.debugMode) {
-        console.log("📌 Chat pinned successfully:", chatId);
+        console.log(`📌 Pinned chat: ${chatId} - "${chatTitle}"`);
       }
 
       // Add highlighting to main chat history
@@ -331,6 +367,7 @@ class ChatGPTPinExtension {
     await this.savePinnedChats();
     this.updatePinnedChatsDisplay();
     this.updateAllPinButtons();
+    this.updateMainChatVisibility(); // Update visibility after pin/unpin
 
     // Visual feedback for successful pin/unpin
     buttonElement.style.transform = "scale(1.2)";
@@ -352,9 +389,21 @@ class ChatGPTPinExtension {
 
     // Update chat highlighting in main history section
     this.updateChatHighlighting();
+
+    // Update active pinned chat highlighting
+    this.updateActivePinnedChat();
+
+    // Update visibility of pinned chats in main history
+    this.updateMainChatVisibility();
   }
 
   updateChatHighlighting() {
+    // DISABLED: Chat highlighting feature removed per user request
+    // This function now does nothing to prevent highlights on pinned chats
+    return;
+    
+    // Original highlighting code commented out below:
+    /*
     // Remove existing highlighting from all chats
     const allChatLinks = document.querySelectorAll(
       'nav a[href*="/c/"]:not(.pinned-chat-item)'
@@ -380,6 +429,60 @@ class ChatGPTPinExtension {
       console.log(
         `✨ Highlighted ${highlightedCount} pinned chats in main history`
       );
+    }
+    */
+  }
+
+  updateActivePinnedChat() {
+    // Get current chat ID from URL
+    const currentUrl = window.location.href;
+    const currentChatId = this.getCurrentChatId(currentUrl);
+    
+    // Remove active class from all pinned chats
+    const allPinnedChats = document.querySelectorAll('.pinned-chat-item');
+    allPinnedChats.forEach(chat => {
+      chat.classList.remove('active');
+    });
+    
+    // Add active class to current pinned chat if it exists
+    if (currentChatId && this.pinnedChats.has(currentChatId)) {
+      const activePinnedChat = document.querySelector(`.pinned-chat-item[href*="${currentChatId}"]`);
+      if (activePinnedChat) {
+        activePinnedChat.classList.add('active');
+        if (this.debugMode) {
+          console.log(`✨ Marked pinned chat as active: ${currentChatId}`);
+        }
+      }
+    }
+  }
+
+  getCurrentChatId(url = window.location.href) {
+    // Extract chat ID from URLs like: https://chatgpt.com/c/12345-67890-abcdef
+    const match = url.match(/\/c\/([a-f0-9\-]+)/);
+    return match ? match[1] : null;
+  }
+
+  updateMainChatVisibility() {
+    // Remove hidden class from all chats first
+    const allChatLinks = document.querySelectorAll('nav a[href*="/c/"]:not(.pinned-chat-item)');
+    allChatLinks.forEach((chatLink) => {
+      chatLink.classList.remove("hidden-pinned-chat");
+    });
+
+    // Hide pinned chats from main chat history
+    let hiddenCount = 0;
+    this.pinnedChats.forEach((chatId) => {
+      const chatLink = document.querySelector(
+        `nav a[href*="/c/${chatId}"]:not(.pinned-chat-item)`
+      );
+      if (chatLink) {
+        chatLink.classList.add("hidden-pinned-chat");
+        hiddenCount++;
+      }
+    });
+
+    if (this.debugMode && hiddenCount > 0) {
+      console.log(`🙈 Hidden ${hiddenCount} pinned chats from main history`);
     }
   }
 
@@ -420,6 +523,7 @@ class ChatGPTPinExtension {
       // Update the UI
       this.updatePinnedChatsDisplay();
       this.updateChatHighlighting();
+      this.updateMainChatVisibility(); // Update visibility after pin/unpin
 
       // Notify popup about the changes
       this.notifyPopupOfChanges();
@@ -431,29 +535,94 @@ class ChatGPTPinExtension {
   }
 
   getChatTitleByElement(chatElement) {
-    // Try multiple selectors to get the chat title
+    if (this.debugMode) {
+      console.log(`🔍 Attempting to extract title from:`, chatElement);
+    }
+
+    // Try multiple selectors to get the chat title (comprehensive list for current ChatGPT)
     const titleSelectors = [
-      "span[data-title]",
-      ".text-sm",
+      // ChatGPT's main title selectors (try these first)
+      'div[class*="truncate"]',
+      'span[class*="truncate"]', 
+      '[class*="conversation-title"]',
       '[data-testid="conversation-title"]',
+      
+      // Common text containers in ChatGPT sidebar
+      '.flex-1 > div',
+      '.relative.grow > div',
+      '.overflow-hidden div',
+      '.text-ellipsis',
+      
+      // Generic text selectors
+      'span[title]:not([title=""])',
+      '.text-sm.truncate',
+      '.text-sm',
       'span[dir="auto"]',
-      ".truncate",
-      "div > div > span",
+      
+      // Fallback to any meaningful text
+      'div:not(:has(button)):not(:empty)',
+      'span:not(:has(button)):not(:empty)',
+      'div',
+      'span'
     ];
 
     for (const selector of titleSelectors) {
-      const titleElement = chatElement.querySelector(selector);
-      if (titleElement && titleElement.textContent.trim()) {
-        return titleElement.textContent.trim();
+      try {
+        const titleElements = chatElement.querySelectorAll(selector);
+        
+        for (const titleElement of titleElements) {
+          if (titleElement && titleElement.textContent) {
+            const title = titleElement.textContent.trim();
+            
+            // Enhanced filtering to get meaningful titles
+            if (title && 
+                title.length > 0 && 
+                title.length < 200 && 
+                !title.includes('📌') && 
+                !title.includes('📍') &&
+                !title.includes('🗑️') &&
+                !title.includes('New chat') &&
+                !title.match(/^[\s\n\r]*$/) &&
+                !title.match(/^[0-9\-]+$/) && // Avoid pure numbers/IDs
+                title !== 'undefined' &&
+                title !== 'null') {
+              
+              if (this.debugMode) {
+                console.log(`✅ Found title using selector "${selector}": "${title}"`);
+              }
+              return title;
+            }
+          }
+        }
+      } catch (e) {
+        // Continue to next selector if this one fails
+        continue;
       }
     }
 
-    // Fallback: try to get any text content
-    const textContent = chatElement.textContent.trim();
-    if (textContent && textContent.length > 0 && textContent.length < 100) {
-      return textContent;
+    // Final fallback: get the cleanest text from the entire element
+    const allText = chatElement.textContent || chatElement.innerText || '';
+    if (allText) {
+      const cleanedText = allText
+        .replace(/📌|📍|🗑️/g, '') // Remove emoji icons
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+      
+      // Split by common separators and take the longest meaningful part
+      const parts = cleanedText.split(/[\n\r\t]/).map(p => p.trim()).filter(p => p.length > 0);
+      for (const part of parts) {
+        if (part.length > 3 && part.length < 100 && !part.match(/^[0-9\-]+$/)) {
+          if (this.debugMode) {
+            console.log(`📝 Using fallback text: "${part}"`);
+          }
+          return part;
+        }
+      }
     }
 
+    if (this.debugMode) {
+      console.warn(`⚠️ Could not extract title from chat element. Element HTML:`, chatElement.outerHTML);
+    }
     return null;
   }
 
@@ -506,11 +675,39 @@ class ChatGPTPinExtension {
         pinnedList.appendChild(pinnedChat);
       }
     });
+
+    // Update active pinned chat highlighting
+    this.updateActivePinnedChat();
+
+    // Update visibility of pinned chats in main history
+    this.updateMainChatVisibility();
+
+    // Schedule periodic cleanup of pinned chats to catch any dynamically added elements
+    setTimeout(() => {
+      this.periodicCleanupPinnedChats();
+    }, 500);
+  }
+
+  periodicCleanupPinnedChats() {
+    const allPinnedChats = document.querySelectorAll('.pinned-chat-item');
+    allPinnedChats.forEach(pinnedChat => {
+      this.cleanupPinnedChatButtons(pinnedChat);
+    });
   }
 
   createPinnedChatItem(originalChat, chatId) {
     const pinnedChat = originalChat.cloneNode(true);
     pinnedChat.className = "pinned-chat-item __menu-item hoverable";
+
+    // Use stored title instead of extracting from DOM
+    const storedTitle = this.pinnedChatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`;
+
+    // Update the title in the cloned element
+    const titleElement = pinnedChat.querySelector('div, span');
+    if (titleElement) {
+      titleElement.textContent = storedTitle;
+      titleElement.title = storedTitle;
+    }
 
     // Preserve ALL original attributes for proper navigation
     const originalHref = originalChat.getAttribute("href");
@@ -541,6 +738,55 @@ class ChatGPTPinExtension {
     if (existingPin) {
       existingPin.remove();
     }
+
+    // Remove 3-dot menus and other unwanted action buttons from pinned chats
+    const unwantedElements = pinnedChat.querySelectorAll([
+      'button[aria-label*="More"]',          // More actions button
+      'button[aria-label*="menu"]',          // Menu buttons
+      'button[aria-label*="options"]',       // Options buttons
+      '[role="button"][aria-label*="More"]', // Role-based more buttons
+      '.dropdown-button',                    // Generic dropdown buttons
+      '.more-button',                        // More buttons
+      '.menu-button',                        // Menu buttons
+      '.options-button',                     // Options buttons
+      'button:has(svg)',                     // Buttons with SVG icons (likely action buttons)
+      'button[aria-haspopup]',              // Dropdown/popup buttons
+      'button[data-testid*="menu"]',        // Test ID menu buttons
+      'button[data-testid*="more"]',        // Test ID more buttons
+      '[data-state="closed"]',              // Dropdown state elements
+      '.relative button:not(.pin-button)',   // Other buttons that aren't pin buttons
+      'button:not(.pin-button)',            // All buttons except pin buttons
+      '[role="button"]:not(.pin-button)'    // All role buttons except pin buttons
+    ].join(', '));
+
+    unwantedElements.forEach(element => {
+      element.remove();
+    });
+
+    // Also remove any trailing action containers that might contain 3-dot menus
+    const trailingContainers = pinnedChat.querySelectorAll('.trailing');
+    trailingContainers.forEach(container => {
+      // Remove all buttons except pin buttons from trailing containers
+      const buttonsToRemove = container.querySelectorAll('button:not(.pin-button), [role="button"]:not(.pin-button)');
+      buttonsToRemove.forEach(button => button.remove());
+      
+      // If the trailing container is now empty, remove it entirely
+      if (container.children.length === 0) {
+        container.remove();
+      }
+    });
+
+    // Additional cleanup for any remaining unwanted elements
+    const allButtons = pinnedChat.querySelectorAll('button, [role="button"]');
+    allButtons.forEach(button => {
+      // Remove any button that isn't a pin button
+      if (!button.classList.contains('pin-button') && 
+          !button.hasAttribute('data-chat-id') &&
+          button.innerHTML !== '📌' && 
+          button.innerHTML !== '📍') {
+        button.remove();
+      }
+    });
 
     // Add unpin button
     const unpinButton = document.createElement("button");
@@ -670,12 +916,44 @@ class ChatGPTPinExtension {
       }
     });
 
-    const trailingContainer = pinnedChat.querySelector(".trailing");
-    if (trailingContainer) {
-      trailingContainer.insertBefore(unpinButton, trailingContainer.firstChild);
+    // Find or create a trailing container for the unpin button
+    let trailingContainer = pinnedChat.querySelector(".trailing");
+    if (!trailingContainer) {
+      // Create a trailing container if none exists
+      trailingContainer = document.createElement("div");
+      trailingContainer.className = "trailing";
+      pinnedChat.appendChild(trailingContainer);
     }
 
+    // Insert the unpin button at the beginning of the trailing container
+    trailingContainer.insertBefore(unpinButton, trailingContainer.firstChild);
+
+    // Schedule a delayed cleanup to catch any dynamically added elements
+    setTimeout(() => {
+      this.cleanupPinnedChatButtons(pinnedChat);
+    }, 100);
+
     return pinnedChat;
+  }
+
+  cleanupPinnedChatButtons(pinnedChat) {
+    // Remove any buttons that aren't pin buttons (catches dynamically added elements)
+    const unwantedButtons = pinnedChat.querySelectorAll('button:not(.pin-button), [role="button"]:not(.pin-button)');
+    unwantedButtons.forEach(button => {
+      // Double-check it's not our unpin button
+      if (!button.classList.contains('pin-button') && 
+          button.innerHTML !== '📌' && 
+          button.innerHTML !== '📍') {
+        button.remove();
+      }
+    });
+
+    // Force hide any remaining elements via class
+    pinnedChat.querySelectorAll('[aria-label*="More"], [aria-label*="menu"], [aria-label*="options"]').forEach(el => {
+      if (!el.classList.contains('pin-button')) {
+        el.style.display = 'none';
+      }
+    });
   }
 
   extractChatId(url) {
@@ -691,6 +969,7 @@ class ChatGPTPinExtension {
         this.pinnedChats.delete(request.chatId);
         this.updatePinnedChatsDisplay();
         this.updateAllPinButtons();
+        this.updateMainChatVisibility(); // Update visibility after pin/unpin
         sendResponse({ success: true });
         break;
 
@@ -699,6 +978,7 @@ class ChatGPTPinExtension {
         this.pinnedChats.clear();
         this.updatePinnedChatsDisplay();
         this.updateAllPinButtons();
+        this.updateMainChatVisibility(); // Update visibility after pin/unpin
         sendResponse({ success: true });
         break;
 
@@ -707,39 +987,28 @@ class ChatGPTPinExtension {
         sendResponse({ pinnedChats: Array.from(this.pinnedChats) });
         break;
 
+      case "getAllChatTitles":
+        // Return the stored titles (much simpler now!)
+        const titles = {};
+        this.pinnedChats.forEach((chatId) => {
+          titles[chatId] = this.pinnedChatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`;
+        });
+        
+        console.log("📋 Returning stored titles:", titles);
+        sendResponse({ titles: titles });
+        break;
+
       case "getChatTitle":
-        // Get chat title from the current page
-        const chatLink = document.querySelector(
-          `nav a[href*="${request.chatId}"]:not(.pinned-chat-item)`
-        );
-        if (chatLink) {
-          const title = this.getChatTitleByElement(chatLink);
-          if (title) {
-            sendResponse({ title: title });
-          } else {
-            sendResponse({ title: `Chat ${request.chatId.substring(0, 8)}` });
-          }
+        // Return stored title for specific chat
+        const storedTitle = this.pinnedChatTitles[request.chatId];
+        if (storedTitle) {
+          sendResponse({ title: storedTitle });
         } else {
           sendResponse({ title: `Chat ${request.chatId.substring(0, 8)}` });
         }
         break;
 
-      case "getAllChatTitles":
-        // Get all pinned chat titles
-        const titles = {};
-        this.pinnedChats.forEach((chatId) => {
-          const chatElement = document.querySelector(
-            `nav a[href*="${chatId}"]:not(.pinned-chat-item)`
-          );
-          if (chatElement) {
-            const title = this.getChatTitleByElement(chatElement);
-            titles[chatId] = title || `Chat ${chatId.substring(0, 8)}`;
-          } else {
-            titles[chatId] = `Chat ${chatId.substring(0, 8)}`;
-          }
-        });
-        sendResponse({ titles: titles });
-        break;
+
 
       default:
         sendResponse({ error: "Unknown action" });
@@ -839,6 +1108,54 @@ class ChatGPTPinExtension {
 
     console.log("⚠️ Pin limit reached: Cannot pin more than 10 chats");
   }
+
+  monitorUrlChanges() {
+    // Monitor URL changes using both popstate and pushstate/replacestate
+    let currentUrl = window.location.href;
+    
+    // Listen for browser back/forward navigation
+    window.addEventListener('popstate', () => {
+      setTimeout(() => {
+        this.updateActivePinnedChat();
+      }, 100);
+    });
+    
+    // Override pushState and replaceState to catch programmatic navigation
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    
+    history.pushState = function(...args) {
+      originalPushState.apply(history, args);
+      setTimeout(() => {
+        if (window.chatGPTPinExtension) {
+          window.chatGPTPinExtension.updateActivePinnedChat();
+        }
+      }, 100);
+    };
+    
+    history.replaceState = function(...args) {
+      originalReplaceState.apply(history, args);
+      setTimeout(() => {
+        if (window.chatGPTPinExtension) {
+          window.chatGPTPinExtension.updateActivePinnedChat();
+        }
+      }, 100);
+    };
+    
+    // Also monitor for URL changes with a periodic check as fallback
+    setInterval(() => {
+      if (window.location.href !== currentUrl) {
+        currentUrl = window.location.href;
+        this.updateActivePinnedChat();
+      }
+    }, 1000);
+    
+    if (this.debugMode) {
+      console.log("📍 URL change monitoring initialized");
+    }
+  }
+
+
 }
 
 // Global extension instance

@@ -3,29 +3,86 @@ class PopupManager {
   constructor() {
     this.pinnedChats = [];
     this.chatTitles = {};
-    this.debugMode = false; // Set to true for detailed logging
+    this.debugMode = true; // Enable debug mode to see title loading
     this.init();
   }
 
   async init() {
+    console.log("🚀 Popup initializing...");
+    
     // Show loading overlay
     this.showLoading();
+    
+    try {
+      // Debug: Check what's actually in storage
+      await this.debugStorage();
+      
+      // Load pinned chats (now includes titles!)
+      await this.loadPinnedChats();
+      
+      // Setup event listeners
+      this.setupEventListeners();
+      
+      // Setup content script communication
+      this.setupContentScriptListener();
+      
+      // Render the UI
+      this.updateUI();
+      
+      console.log("✅ Popup initialization complete");
+    } catch (error) {
+      console.error("❌ Popup initialization failed:", error);
+    } finally {
+      // Always hide loading overlay
+      this.hideLoading();
+    }
+  }
 
-    // Load initial data
-    await this.loadPinnedChats();
-    await this.loadChatTitles(); // Load actual chat titles
+  async testContentScriptCommunication() {
+    try {
+      console.log("🧪 Testing content script communication...");
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Communication timeout')), 3000)
+      );
+      
+      const response = await Promise.race([
+        this.sendMessageToContentScript("getPinnedChats"),
+        timeoutPromise
+      ]);
+      
+      console.log("✅ Content script communication working:", response);
+      return true;
+    } catch (error) {
+      console.error("❌ Content script communication failed:", error);
+      console.log("ℹ️ This might be normal if ChatGPT tab is not open");
+      return false;
+    }
+  }
 
-    // Setup event listeners
-    this.setupEventListeners();
-
-    // Setup content script communication
-    this.setupContentScriptListener();
-
-    // Update UI
-    this.updateUI();
-
-    // Hide loading overlay
-    this.hideLoading();
+  // Debug function to manually inspect storage
+  async debugStorage() {
+    console.log("🔍 === STORAGE DEBUG ===");
+    try {
+      const allData = await chrome.storage.local.get(null);
+      console.log("📦 All storage data:", allData);
+      
+      if (allData.pinnedChats) {
+        console.log("📌 Pinned chats found:", allData.pinnedChats.length, allData.pinnedChats);
+      } else {
+        console.log("❌ No pinned chats in storage");
+      }
+      
+      if (allData.chatTitles) {
+        console.log("📝 Chat titles found:", Object.keys(allData.chatTitles).length, allData.chatTitles);
+      } else {
+        console.log("❌ No chat titles in storage");
+      }
+    } catch (error) {
+      console.error("❌ Storage debug failed:", error);
+    }
+    console.log("🔍 === END STORAGE DEBUG ===");
   }
 
   setupEventListeners() {
@@ -36,32 +93,19 @@ class PopupManager {
         this.openChatGPT();
       });
 
-    // Refresh button
-    document.getElementById("refresh-btn").addEventListener("click", () => {
-      this.refreshData();
-    });
-
-    // Export button
-    document.getElementById("export-btn").addEventListener("click", () => {
-      this.exportPinnedChats();
-    });
-
     // Clear all button
     document.getElementById("clear-all-btn").addEventListener("click", () => {
       this.clearAllPins();
     });
 
-    // Help and settings links
-    document.getElementById("help-link").addEventListener("click", (e) => {
-      e.preventDefault();
-      this.showHelp();
+    document.getElementById("open-chatgpt-btn").addEventListener("click", () => {
+      chrome.tabs.create({ url: "https://chatgpt.com" });
     });
 
-    document.getElementById("settings-link").addEventListener("click", (e) => {
-      e.preventDefault();
-      this.showSettings();
-    });
+
   }
+
+
 
   setupContentScriptListener() {
     // Listen for messages from content script about changes
@@ -81,31 +125,59 @@ class PopupManager {
 
   async loadPinnedChats() {
     try {
-      const result = await chrome.storage.local.get([
-        "pinnedChats",
-        "chatTitles",
-      ]);
-      this.pinnedChats = result.pinnedChats || [];
+      console.log("📦 Loading pinned chats from storage...");
+      const result = await chrome.storage.local.get(["pinnedChats"]);
+      
+      console.log("🔍 Storage result:", result);
+      
+      const loadedChats = result.pinnedChats || [];
+      this.pinnedChats = [];
+      this.chatTitles = {};
 
-      // Load cached titles from storage
-      this.chatTitles = result.chatTitles || {};
-      console.log("Loaded pinned chats:", this.pinnedChats.length);
-      console.log("Loaded cached titles:", Object.keys(this.chatTitles).length);
+      // Handle both old format (array of IDs) and new format (array of objects)
+      loadedChats.forEach(item => {
+        if (typeof item === 'string') {
+          // Old format: just chat ID
+          this.pinnedChats.push(item);
+          this.chatTitles[item] = `Chat ${item.substring(0, 8)}`;
+        } else if (item && item.id) {
+          // New format: object with id and title
+          this.pinnedChats.push(item.id);
+          this.chatTitles[item.id] = item.title || `Chat ${item.id.substring(0, 8)}`;
+        }
+      });
+      
+      console.log("✅ Loaded pinned chats:", this.pinnedChats.length, "chats:", this.pinnedChats);
+      console.log("✅ Loaded chat titles:", Object.keys(this.chatTitles).length, "titles:", this.chatTitles);
+      
+      // If we have pinned chats, update UI immediately
+      if (this.pinnedChats.length > 0) {
+        console.log("🎯 Found pinned chats in storage, updating UI...");
+        this.updateUI();
+      }
+      
     } catch (error) {
-      console.error("Error loading pinned chats:", error);
+      console.error("❌ Error loading pinned chats:", error);
       this.showError("Failed to load pinned chats");
     }
   }
 
   async savePinnedChats() {
     try {
-      await chrome.storage.local.set({ pinnedChats: this.pinnedChats });
-      console.log("Saved pinned chats:", this.pinnedChats);
+      // Save in new format with titles
+      const pinnedChatsArray = this.pinnedChats.map(chatId => ({
+        id: chatId,
+        title: this.chatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`
+      }));
+
+      await chrome.storage.local.set({ pinnedChats: pinnedChatsArray });
+      console.log("💾 Saved pinned chats:", pinnedChatsArray);
     } catch (error) {
       console.error("Error saving pinned chats:", error);
-      this.showError("Failed to save changes");
     }
   }
+
+
 
   async saveChatTitles() {
     try {
@@ -119,61 +191,46 @@ class PopupManager {
   async loadChatTitles() {
     try {
       console.log("🔍 Loading chat titles from content script...");
-      console.log(
-        "📋 Current cached titles:",
-        Object.keys(this.chatTitles).length
-      );
+      console.log("📋 Current cached titles:", Object.keys(this.chatTitles).length);
+      console.log("📌 Pinned chats to get titles for:", this.pinnedChats);
 
       // Get all chat titles from content script
-      const response = await this.sendMessageToContentScript(
-        "getAllChatTitles"
-      );
+      const response = await this.sendMessageToContentScript("getAllChatTitles");
 
       console.log("📨 Content script response:", response);
 
       if (response && response.titles) {
         // Merge new titles with cached ones
         this.chatTitles = { ...this.chatTitles, ...response.titles };
-        console.log(
-          "✅ Successfully loaded chat titles:",
-          Object.keys(this.chatTitles).length,
-          "total titles"
-        );
+        console.log("✅ Successfully loaded chat titles:", Object.keys(this.chatTitles).length, "total titles");
+        console.log("📝 All chat titles:", this.chatTitles);
 
         // Save titles to storage for offline access
         await this.saveChatTitles();
-
-        if (this.debugMode) {
-          console.log("📝 All chat titles:", this.chatTitles);
-        }
       } else {
-        console.warn(
-          "⚠️ No titles received from content script - using cached titles"
-        );
-
-        // If we have no cached titles for pinned chats, try individual requests
-        const missingTitles = this.pinnedChats.filter(
-          (chatId) => !this.chatTitles[chatId]
-        );
-        if (missingTitles.length > 0) {
-          console.log(
-            "🔄 Trying individual title requests for missing chats..."
-          );
-          await this.loadIndividualTitles();
-        }
-      }
-    } catch (error) {
-      console.error("❌ Error loading chat titles:", error);
-      console.log("📱 Using cached titles only");
-
-      // If we have no cached titles for pinned chats, try individual requests
-      const missingTitles = this.pinnedChats.filter(
-        (chatId) => !this.chatTitles[chatId]
-      );
-      if (missingTitles.length > 0) {
-        console.log("🔄 Trying individual title requests as last resort...");
+        console.warn("⚠️ No titles received from content script - using cached titles");
+        
+        // Force individual title loading for all pinned chats
+        console.log("🔄 Forcing individual title requests for all pinned chats...");
         await this.loadIndividualTitles();
       }
+
+      // Force refresh titles for any that are still showing as "Chat ..."
+      const needRefresh = this.pinnedChats.filter(chatId => 
+        !this.chatTitles[chatId] || this.chatTitles[chatId].startsWith('Chat ')
+      );
+      
+      if (needRefresh.length > 0) {
+        console.log("🔄 Force refreshing titles for chats:", needRefresh);
+        for (const chatId of needRefresh) {
+          await this.loadTitleForChat(chatId);
+        }
+      }
+
+    } catch (error) {
+      console.error("❌ Error loading chat titles:", error);
+      console.log("📱 Trying individual title loading as fallback...");
+      await this.loadIndividualTitles();
     }
   }
 
@@ -209,39 +266,32 @@ class PopupManager {
     );
   }
 
-  sendMessageToContentScript(action, data = {}) {
-    return new Promise((resolve) => {
+  async sendMessageToContentScript(action, data = {}) {
+    return new Promise((resolve, reject) => {
+      // Add timeout to prevent hanging
+      const timeout = setTimeout(() => {
+        reject(new Error(`Message timeout: ${action}`));
+      }, 5000);
+
       chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
-        console.log(`📡 Searching for ChatGPT tabs for action: ${action}`);
-        console.log(`🔍 Found ${tabs.length} ChatGPT tabs`);
-
-        if (tabs.length > 0) {
-          const tab = tabs[0];
-          console.log(`📨 Sending message to tab ${tab.id}: ${action}`);
-
-          chrome.tabs.sendMessage(
-            tab.id,
-            {
-              action: action,
-              ...data,
-            },
-            (response) => {
-              if (chrome.runtime.lastError) {
-                console.warn(
-                  "⚠️ Message sending error:",
-                  chrome.runtime.lastError.message
-                );
-                resolve(null);
-              } else {
-                console.log(`✅ Response received for ${action}:`, response);
-                resolve(response);
-              }
-            }
-          );
-        } else {
-          console.warn("⚠️ No ChatGPT tabs found");
-          resolve(null);
+        if (tabs.length === 0) {
+          clearTimeout(timeout);
+          reject(new Error("No ChatGPT tabs found"));
+          return;
         }
+
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { action, ...data },
+          (response) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
       });
     });
   }
@@ -263,20 +313,21 @@ class PopupManager {
 
   updateStatus() {
     const statusElement = document.getElementById("extension-status");
+    
+    console.log("🔄 Updating extension status...");
 
     // Check if we're on ChatGPT
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const currentTab = tabs[0];
-      if (
-        currentTab &&
-        currentTab.url &&
-        currentTab.url.includes("chatgpt.com")
-      ) {
+    chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
+      console.log(`🔍 Found ${tabs.length} ChatGPT tabs`);
+      
+      if (tabs && tabs.length > 0) {
         statusElement.textContent = "Active";
         statusElement.className = "status-value status-active";
+        console.log("✅ Extension status: Active");
       } else {
-        statusElement.textContent = "Inactive";
+        statusElement.textContent = "No ChatGPT Tab";
         statusElement.className = "status-value status-inactive";
+        console.log("⚠️ Extension status: No ChatGPT Tab");
       }
     });
   }
@@ -304,10 +355,11 @@ class PopupManager {
   }
 
   createPinnedChatElement(chatId, index) {
-    // Get real chat title or fallback
-    const chatTitle =
-      this.chatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`;
+    // Get stored chat title (now directly available!)
+    const chatTitle = this.chatTitles[chatId] || `Chat ${chatId.substring(0, 8)}`;
     const shortId = chatId.substring(0, 8);
+
+    console.log(`🎨 Creating element for chat ${chatId}: "${chatTitle}"`);
 
     return `
       <div class="pinned-item" data-chat-id="${chatId}" data-index="${index}">
@@ -320,6 +372,32 @@ class PopupManager {
         <div class="pinned-item-url" title="/c/${chatId}">/c/${shortId}</div>
       </div>
     `;
+  }
+
+  async loadTitleForChat(chatId) {
+    try {
+      const response = await this.sendMessageToContentScript("getChatTitle", {
+        chatId: chatId
+      });
+      
+      if (response && response.title && response.title !== `Chat ${chatId.substring(0, 8)}`) {
+        this.chatTitles[chatId] = response.title;
+        await this.saveChatTitles();
+        // Re-render the specific item with the new title
+        this.updatePinnedChatTitle(chatId, response.title);
+        console.log(`✅ Updated title for ${chatId}: ${response.title}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error loading title for ${chatId}:`, error);
+    }
+  }
+
+  updatePinnedChatTitle(chatId, newTitle) {
+    const pinnedItem = document.querySelector(`[data-chat-id="${chatId}"] .pinned-item-title`);
+    if (pinnedItem) {
+      pinnedItem.textContent = newTitle;
+      pinnedItem.title = newTitle;
+    }
   }
 
   getChatTitle(chatId) {
@@ -462,78 +540,6 @@ class PopupManager {
     });
   }
 
-  async refreshData() {
-    this.showLoading();
-    await this.loadPinnedChats();
-    await this.loadChatTitles(); // Refresh chat titles too
-    this.updateUI();
-
-    // Add a small delay for better UX
-    setTimeout(() => {
-      this.hideLoading();
-    }, 500);
-  }
-
-  exportPinnedChats() {
-    const exportData = {
-      extension: "ChatGPT Pin Chats",
-      version: "1.0.0",
-      exported: new Date().toISOString(),
-      pinnedChats: this.pinnedChats.map((chatId) => ({
-        id: chatId,
-        url: `https://chatgpt.com/c/${chatId}`,
-        title: this.getChatTitle(chatId),
-      })),
-    };
-
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-      type: "application/json",
-    });
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `chatgpt-pinned-chats-${
-      new Date().toISOString().split("T")[0]
-    }.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  showHelp() {
-    const helpText = `
-ChatGPT Pin Chats Extension Help:
-
- 🔹 How to Pin Chats:
- • Go to chatgpt.com
- • Click the 📍 icon next to any chat
- • Chat will appear in "Pinned Chats" section
-
-🔹 How to Unpin:
-• Click the 📌 icon next to a pinned chat
-• Or use the unpin button in this popup
-
-🔹 Features:
-• Pinned chats persist across sessions
-• Quick access from popup
-• Export/backup functionality
-
-Need more help? Check the extension documentation.
-    `.trim();
-
-    alert(helpText);
-  }
-
-  showSettings() {
-    // For now, just show a simple alert
-    // In a full implementation, this could open a settings page
-    alert(
-      "Settings panel coming soon!\n\nCurrent features:\n• Pin/unpin chats\n• Export data\n• Dark mode support"
-    );
-  }
-
   notifyContentScript(action, data = {}) {
     chrome.tabs.query({ url: "https://chatgpt.com/*" }, (tabs) => {
       tabs.forEach((tab) => {
@@ -583,6 +589,8 @@ Need more help? Check the extension documentation.
       statusElement.className = originalClass;
     }, 1000);
   }
+
+
 }
 
 // Initialize popup when DOM is ready

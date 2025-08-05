@@ -52,7 +52,8 @@
   z-index: 10;
 }
 
-/* Pinned Chat Highlighting in Main History */
+/* REMOVED: Pinned Chat Highlighting in Main History - All highlighting styles commented out */
+/*
 .chat-item-pinned {
   background: linear-gradient(
     90deg,
@@ -63,8 +64,10 @@
   border-left: 3px solid #3b82f6 !important;
   position: relative;
 }
+*/
 
-/* Dark mode pinned chat highlighting */
+/* REMOVED: Dark mode pinned chat highlighting */
+/*
 [data-theme="dark"] .chat-item-pinned,
 .dark .chat-item-pinned,
 body.dark .chat-item-pinned {
@@ -76,8 +79,10 @@ body.dark .chat-item-pinned {
   ) !important;
   border-left: 3px solid #60a5fa !important;
 }
+*/
 
-/* Pinned indicator badge */
+/* REMOVED: Pinned indicator badge */
+/*
 .chat-item-pinned::before {
   content: "📌";
   position: absolute;
@@ -88,8 +93,10 @@ body.dark .chat-item-pinned {
   opacity: 0.7;
   z-index: 1;
 }
+*/
 
-/* Enhanced hover state for pinned chats */
+/* REMOVED: Enhanced hover state for pinned chats */
+/*
 .chat-item-pinned:hover {
   background: linear-gradient(
     90deg,
@@ -109,6 +116,7 @@ body.dark .chat-item-pinned:hover {
     rgba(96, 165, 250, 0.04) 100%
   ) !important;
 }
+*/
 
 .pin-button:hover {
   opacity: 1;
@@ -157,7 +165,6 @@ body.dark .pin-button.pinned:hover {
 /* Pinned chat item styling */
 .pinned-chat-item {
   background-color: var(--surface-secondary, rgba(0, 0, 0, 0.02));
-  border-left: 3px solid var(--accent-color, #10a37f);
   margin-left: 8px;
   margin-right: 8px;
   border-radius: 6px;
@@ -165,6 +172,47 @@ body.dark .pin-button.pinned:hover {
 
 .pinned-chat-item:hover {
   background-color: var(--surface-hover, rgba(0, 0, 0, 0.05));
+}
+
+/* Active pinned chat styling - matches ChatGPT's native active chat highlighting */
+.pinned-chat-item.active {
+  background-color: #ffffff0d !important;
+}
+
+/* Dark mode support for active pinned chat */
+@media (prefers-color-scheme: dark) {
+  .pinned-chat-item.active {
+    background-color: #ffffff0d !important;
+  }
+}
+
+/* Alternative dark mode selectors for better compatibility */
+[data-theme="dark"] .pinned-chat-item.active,
+.dark .pinned-chat-item.active,
+body.dark .pinned-chat-item.active {
+  background-color: #ffffff0d !important;
+}
+
+/* Hide pinned chats from main chat history */
+.hidden-pinned-chat {
+  display: none !important;
+}
+
+/* Force hide 3-dot menus and action buttons in pinned chats */
+.pinned-chat-item button:not(.pin-button),
+.pinned-chat-item [role="button"]:not(.pin-button),
+.pinned-chat-item [aria-label*="More"],
+.pinned-chat-item [aria-label*="menu"],
+.pinned-chat-item [aria-label*="options"],
+.pinned-chat-item [aria-haspopup],
+.pinned-chat-item .dropdown-button,
+.pinned-chat-item .more-button,
+.pinned-chat-item .menu-button,
+.pinned-chat-item .options-button,
+.pinned-chat-item [data-testid*="menu"],
+.pinned-chat-item [data-testid*="more"],
+.pinned-chat-item [data-state="closed"] {
+  display: none !important;
 }
 
 /* Dark mode support */
